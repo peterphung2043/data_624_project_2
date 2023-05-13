@@ -15,6 +15,9 @@ library(corrplot)
 library(mice)
 library(caret)
 library(caTools)
+library(RWeka)
+library(ipred)
+library(randomForest)
 ```
 
 # Problem Statement
@@ -247,9 +250,14 @@ beverage_test <- beverage_test[, names(beverage_train)]
 
 We will use the methodology outlined in page 163 of the Applied Predictive Modeling textbook by Kuhn and Johnson in order to ensure that the absolute pairwise correlation between the predictors is less than 0.75. For the `beverage_test` set that will be used to generate the final predictions, only the predictors that were selected from the `beverage_train` dataset after filtering out the highly correlated predictors will be used.
 
+Before the removal of the highly correlated predictors is performed. We must be cognizant of the fact that PLS models "allows you to reduce the dimensionality of correlated variables and model the underlying, shared, information of those variables (in both dependent and independent variables)." ([source](http://webcache.googleusercontent.com/search?q=cache:o5QYlxuDAvYJ:https://towardsdatascience.com/partial-least-squares-f4e6714452a&client=ubuntu&hl=en&gl=us&strip=1&vwsrc=0)). Therefore, we will be using all of the remaining variables for the PLS model generated in the "Partial Least Squares" section.
+
 ```{r}
 tooHigh <- findCorrelation(cor(beverage_train %>%
   select(-c(Brand_Code, PH))), cutoff = 0.75)
+
+beverage_train_high_corr <- beverage_train
+beverage_test_high_corr <- beverage_test
 
 beverage_train <- beverage_train[, -tooHigh]
 beverage_test <- beverage_test[, -tooHigh]
@@ -279,6 +287,13 @@ train_X  <- subset(beverage_train %>% select(-PH), sample == TRUE)
 test_X   <- subset(beverage_train %>% select(-PH), sample == FALSE)
 train_y <- subset(beverage_train$PH, sample == TRUE)
 test_y <- subset(beverage_train$PH, sample == FALSE)
+
+sample_high_corr <- sample.split(beverage_train$PH, SplitRatio = 0.8)
+
+train_X_high_corr <- subset(beverage_train_high_corr %>% select(-PH), sample == TRUE)
+test_X_high_corr <- subset(beverage_train_high_corr %>% select(-PH), sample == FALSE)
+train_y_high_corr <- subset(beverage_train_high_corr$PH, sample == TRUE)
+test_y_high_corr <- subset(beverage_train_high_corr$PH, sample == FALSE)
 ```
 
 ## General Modeling
@@ -287,7 +302,17 @@ For some of the models, we will be using the `trControl` parameter in the `caret
 
 "The `train` function generates a resampling estimate of performance. Because the training set size is not small, 10-fold cross-validation should produce reasonable estimates of model performance. The function `trainControl` speciﬁes the type of resampling."
 
-We will be using the testing set to compute the testing set RMSE, Rsquared, and MAE. We will use these metrics to select the best model
+We will be using the testing set to compute the testing set RMSE, Rsquared, and MAE. We will use these metrics to select the best model.
+
+Some of the models will not allow categorical variables to be used, which means the `Brand Code` variable cannot be used in these model types. Converting a categorical variable to a numerical one can be done, but since the `Brand Code` variable takes on more than two different categories, the conversion would not be advantageous. As explained by Ashkon Farhangi:
+
+"In the vast majority of cases using dummy variables is more statistically sound than using a single numerical variable. A single numerical variable does not accurately encode the information represented by a categorical variable, because of the relationships between numerical values it implicitly implies. On the number line, 1 is closer to 2 than it is to 3. However, by definition no pair of values assumed by categorical variables is more similar than any other. Encoding three such values as 1, 2 and 3 will result in the model inferring incorrect relationships between those numbers. The fact that real valued numbers fall on a number line that implies a greater degree of similarity between values that fall closer to one another along it; this notion is incompatible with categorical variables. Using dummy variables avoids this pitfall."
+
+Models where the `Brand Code` predictor was not used include:
+
+- Penalized Regression
+- Support Vector Machines
+- K-Nearest Neighbors
 
 ```{r}
 ctrl <- trainControl(method = "cv", number = 10)
@@ -312,20 +337,18 @@ postResample(pred = olr_pred, obs = test_y)
 ```{r}
 set.seed(100)
 
-pls_model <- train(train_X, train_y,
-                 method = "pls",
-                 tuneLength = 20,
-                 trControl = ctrl,
-                 preProc = c("center", "scale"))
+pls_model <- train(train_X_high_corr, 
+                   train_y_high_corr,
+                   method = "pls",
+                   tuneLength = 20,
+                   trControl = ctrl,
+                   preProc = c("center", "scale"))
 
-pls_pred <- predict(pls_model, newdata = data.frame(test_X))
-postResample(pred = pls_pred, obs = test_y)
+pls_pred <- predict(pls_model, newdata = test_X_high_corr)
+postResample(pred = pls_pred, obs = test_y_high_corr)
 ```
 
 #### Penalized Regression Model
-
-for this model, the caregorical variables in the `Brand_Code` variables we converted to numeric in order for the Ridge regression model to converge. Also, in this particular example, the dataframes have to be converted to matrices and individual columns in `Brand_Code` to vectors if they are being used individually.
-
 
 ```{r}
 ## Define the candidate set of values
@@ -333,22 +356,236 @@ ridgeGrid <- data.frame(.lambda = seq(0, .1, length = 15))
 
 set.seed(100)
 
-ridgeReg_model <- train(train_X %>%
-                          mutate(Brand_Code = as.numeric(Brand_Code)) %>%
-                          as.matrix(), 
+ridgeReg_model <- train(train_X[,-1] %>% as.matrix(),
                         train_y %>% as.vector(),
-                     method = "ridge",
-                     tuneGrid = ridgeGrid,
-                     trControl = ctrl,
-                     preProc = c("center", "scale"))
+                        method = "ridge",
+                        tuneGrid = ridgeGrid,
+                        trControl = ctrl,
+                        preProc = c("center", "scale"))
 
-ridgeReg_pred <- predict(ridgeReg_model, newdata = test_X %>%
-                          mutate(Brand_Code = as.numeric(Brand_Code)) %>%
-                          as.matrix())
+ridgeReg_pred <- predict(ridgeReg_model, newdata = test_X[,-1] %>% as.matrix())
 postResample(pred = ridgeReg_pred, obs = test_y %>% as.vector())
 ```
 
 
 ### Non-Linear Regression Modeling
 
+#### Neural Network Model
+
+```{r}
+# nnetGrid <- expand.grid(.decay = c(0, 0.01, .1),
+#                         .size = c(1:10),
+#                         .bag = FALSE)
+# 
+# set.seed(100)
+# 
+# nnet_model <- train(train_X, train_y,
+#                   method = "avNNet",
+#                   tuneGrid = nnetGrid,
+#                   trControl = ctrl,
+#                   preProc = c("center", "scale"),
+#                   linout = TRUE,
+#                   trace = FALSE,
+#                   MaxNWts = 84851,
+#                   maxit = 500)
+# 
+# nnet_pred <- predict(nnet_model, newdata = data.frame(test_X))
+# postResample(pred = nnet_pred, obs = test_y)
+```
+
+#### Multivariate Adaptive Regression Splines
+
+```{r}
+marsGrid <- expand.grid(.degree = 1:2, .nprune = 2:38)
+
+set.seed(100)
+
+mars_model <- train(train_X,
+                    train_y,
+                    method = "earth",
+                    tuneGrid = marsGrid,
+                    preProcess = c("YeoJohnson"),
+                    trControl = trainControl(method = "cv"))
+
+mars_pred <- predict(mars_model, newdata = test_X)
+postResample(pred = mars_pred, obs = test_y)
+```
+
+#### Support Vector Machines
+
+```{r}
+svmR_model <- train(train_X[,-1] %>% as.matrix(),
+                    train_y %>% as_vector(),
+                    method = "svmRadial",
+                    preProc = c("YeoJohnson", "center", "scale"),
+                    tuneLength = 14,
+                    trControl = trainControl(method = "cv"))
+
+svmR_pred <- predict(svmR_model, newdata = test_X[,-1] %>% as.matrix())
+postResample(pred = svmR_pred, obs = test_y %>% as_vector())
+```
+
+#### K-Nearest Neighbors
+
+```{r}
+set.seed(100)
+
+knn_model <- train(train_X[,-1] %>% as.matrix(),
+                   train_y %>% as_vector(),
+                   method = "knn",
+                   preProc = c("center", "scale"),
+                   tuneGrid = data.frame(.k = 1:20),
+                   trControl = trainControl(method = "cv"))
+
+knn_pred <- predict(knn_model, newdata = test_X[,-1] %>% as.matrix())
+postResample(pred = knn_pred, obs = test_y %>% as_vector())
+```
+
+## Regression Trees and Rule-Based Models
+
+According to [this](https://www.google.com/url?sa=t&rct=j&q=&esrc=s&source=web&cd=&cad=rja&uact=8&ved=2ahUKEwjHxYqInvP-AhVPFlkFHUb2BOwQFnoECBMQAQ&url=https%3A%2F%2Ftowardsdatascience.com%2Fdo-decision-trees-need-feature-scaling-97809eaa60c6&usg=AOvVaw1AqZ6ad45E2ok3xan-Q4Pb) Medium article:
+
+"Decision trees and ensemble methods do not require feature scaling to be performed as they are not sensitive to the the variance in the data."
+
+Therefore, the only preprocessing that will be done is performing a Yeo-Johnson transformation using the `preProcess` parameter.
+
+
+#### Single Trees Model
+
+```{r}
+single_trees_model <- train(train_X, 
+                            train_y,
+                            method = "rpart2",
+                            tuneLength = 10,
+                            preProcess = c("YeoJohnson"),
+                            trControl = trainControl(method = "cv"))
+
+single_trees_pred <- predict(single_trees_model, newdata = test_X)
+postResample(pred = single_trees_pred, obs = test_y)
+```
+
+#### Model Tree
+
+```{r}
+set.seed(100)
+
+tree_model <- train(
+                train_X, 
+                train_y,
+                method = "M5",
+                trControl = trainControl(method = "cv"),
+                preProcess = c("YeoJohnson"),
+                control = Weka_control(M = 10))
+
+tree_pred <- predict(tree_model, newdata = test_X)
+postResample(pred = tree_pred, obs = test_y)
+```
+
+#### Bagged Tree Model
+
+```{r}
+bagged_tree_model <- ipredbagg(train_y, 
+                               train_X,
+                               preProcess = c("YeoJohnson"))
+
+bagged_tree_pred <- predict(bagged_tree_model, newdata = test_X)
+postResample(pred = bagged_tree_pred, obs = test_y)
+```
+
+#### Random Forest Model
+
+```{r}
+rf_model <- randomForest(train_X, train_y,
+                         preProcess = c("YeoJohnson", "center", "scale"),
+                        importance = TRUE,
+                        ntrees = 1000)
+
+rf_pred <- predict(rf_model, newdata = test_X)
+postResample(pred = rf_pred, obs = test_y)
+```
+
+#### Boosted Tree Model
+
+```{r}
+gbmGrid <- expand.grid(.interaction.depth = seq(1, 7, by = 2),
+                       .n.trees = seq(100, 1000, by = 50),
+                       .shrinkage = c(0.01, 0.1),
+                       .n.minobsinnode = 10)
+
+set.seed(100)
+
+gbmTune <- train(train_X, 
+                 train_y,
+                 method = "gbm",
+                 preProcess = c("YeoJohnson"),
+                 tuneGrid = gbmGrid,
+                 verbose = FALSE)
+
+gbm_pred <- predict(gbmTune, newdata = test_X)
+postResample(pred = gbm_pred, obs = test_y)
+```
+
+#### Cubist
+
+```{r}
+cubistTuned <- train(
+  train_X, 
+  train_y,
+  preProcess = c("YeoJohnson"),
+  method = "cubist")
+
+cubist_pred <- predict(cubistTuned, newdata = test_X)
+postResample(pred = cubist_pred, obs = test_y)
+```
+
+## Modeling Selection
+
+In this section, the model that will be selected to generate the final test predictions will be selected. The selection criteria comes down to three metrics. These three metrics were generated using the `postResample` function:
+
+- [MAE](https://www.reddit.com/r/explainlikeimfive/comments/8axf23/eli5_what_is_the_difference_between_mean_absolute/)
+  - Measures average distance of each measurement from the total average value. Small errors drown out rare, but large errors.
+
+- [RMSE](https://help.sap.com/docs/SAP_PREDICTIVE_ANALYTICS/41d1a6d4e7574e32b815f1cc87c00f42/5e5198fd4afe4ae5b48fefe0d3161810.html)
+  - This is the MAE, but the error is squared, then the entire square root of the equation is taken. This is to reduce the effect of small errors will increasing the effect of large errors.
+  
+- [Rsquared](https://www.investopedia.com/terms/r/r-squared.asp)
+  - Represents how much of the variation of a dependent variable is explained by an independent variable in a regression model.
+  
+All of these metrics will be generated using the test set that was generated when the 80/20 split was performed. Each of these metrics are displayed in the table below.
+
+````{r, message = FALSE, echo = FALSE, include = FALSE}
+#Function to update the tracker
+update_tracker <- function(model_name, actual, predicted){
+  model_metrics <- postResample(pred = predicted, obs = actual)
+  tracker[nrow(tracker) + 1,] <- c(model_name, model_metrics)
+  return(tracker)
+}
+```
+
+```{r, message = FALSE, echo = FALSE, include = FALSE}
+#create data frame with 0 rows and 3 columns
+tracker <- data.frame(matrix(ncol = 4, nrow = 0))
+
+#provide column names
+colnames(tracker) <- c("Model", "RMSE", "Rsquared", "MAE")
+
+# Linear Models
+tracker <- update_tracker("Ordinary Linear Regression", test_y, olr_pred)
+tracker <- update_tracker("Partial Least Squares", test_y_high_corr, pls_pred)
+tracker <- update_tracker("Penalized Regression Model", test_y %>% as.vector(), ridgeReg_pred)
+
+# Non-Linear Models
+# tracker <- update_tracker("Neural Network Model", test_y, nnet_pred)
+tracker <- update_tracker("Multivariate Adaptive Regression Splines", test_y, mars_pred)
+tracker <- update_tracker("Support Vector Machines", test_y %>% as_vector(), svmR_pred)
+tracker <- update_tracker("K-Nearest Neighbors", test_y %>% as_vector(), knn_pred)
+
+# Regression Trees
+tracker <- update_tracker("Single Tree", test_y, single_trees_pred)
+tracker <- update_tracker("Model Tree", test_y, tree_pred)
+tracker <- update_tracker("Bagged Tree", test_y, bagged_tree_pred)
+tracker <- update_tracker("Random Forest", test_y, rf_pred)
+tracker <- update_tracker("Boosted Tree", test_y, gbm_pred)
+tracker <- update_tracker("Cubist", test_y, cubist_pred)
+```
 
