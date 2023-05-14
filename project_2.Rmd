@@ -322,6 +322,8 @@ ctrl <- trainControl(method = "cv", number = 10)
 
 #### Ordinary Linear Regression
 
+We set the `method` to `lm` in the `train` function in the `caret` package to let `train` know that the data must be fit to a linear regression model.
+
 ```{r}
 olr_model <- caret::train(train_X, train_y, 
                           method = "lm", 
@@ -329,10 +331,11 @@ olr_model <- caret::train(train_X, train_y,
                           preProcess = c("YeoJohnson", "center", "scale"))
 
 olr_pred <- predict(olr_model, newdata = data.frame(test_X))
-postResample(pred = olr_pred, obs = test_y)
 ```
 
 #### Partial Least Squares
+
+For this model, the maximum number of components was calculated.
 
 ```{r}
 set.seed(100)
@@ -342,13 +345,18 @@ pls_model <- train(train_X_high_corr,
                    method = "pls",
                    tuneLength = 20,
                    trControl = ctrl,
-                   preProc = c("center", "scale"))
+                   preProc = c("YeoJohnson", "center", "scale"))
 
 pls_pred <- predict(pls_model, newdata = test_X_high_corr)
-postResample(pred = pls_pred, obs = test_y_high_corr)
+
+plot(pls_model)
 ```
 
+The plot above shows us that a minimum RMSE was found at around 0.1347. This is approximately at 10 components.
+
 #### Penalized Regression Model
+
+In order to tune over the penalty, a dataframe of different lambdas from 0 to 0.1 was generated. This dataframe was then used in the `tuneGrid` parameter in the `train` function in the `caret` package in order to find the lambda, and in effect, the model, resulting in the lowest error.
 
 ```{r}
 ## Define the candidate set of values
@@ -361,39 +369,41 @@ ridgeReg_model <- train(train_X[,-1] %>% as.matrix(),
                         method = "ridge",
                         tuneGrid = ridgeGrid,
                         trControl = ctrl,
-                        preProc = c("center", "scale"))
+                        preProc = c("YeoJohnson", "center", "scale"))
 
 ridgeReg_pred <- predict(ridgeReg_model, newdata = test_X[,-1] %>% as.matrix())
-postResample(pred = ridgeReg_pred, obs = test_y %>% as.vector())
-```
 
+plot(ridgeReg_model)
+```
+The plot above shows us that the lowest RMSE happens when the lambda/weight decay is at 0.007142857.
 
 ### Non-Linear Regression Modeling
 
 #### Neural Network Model
 
-```{r}
-# nnetGrid <- expand.grid(.decay = c(0, 0.01, .1),
-#                         .size = c(1:10),
-#                         .bag = FALSE)
-# 
-# set.seed(100)
-# 
-# nnet_model <- train(train_X, train_y,
-#                   method = "avNNet",
-#                   tuneGrid = nnetGrid,
-#                   trControl = ctrl,
-#                   preProc = c("center", "scale"),
-#                   linout = TRUE,
-#                   trace = FALSE,
-#                   MaxNWts = 84851,
-#                   maxit = 500)
-# 
-# nnet_pred <- predict(nnet_model, newdata = data.frame(test_X))
-# postResample(pred = nnet_pred, obs = test_y)
+```{r eval = FALSE}
+nnetGrid <- expand.grid(.decay = c(0, 0.01, .1),
+                        .size = c(1:10),
+                        .bag = FALSE)
+
+set.seed(100)
+
+nnet_model <- train(train_X, train_y,
+                  method = "avNNet",
+                  tuneGrid = nnetGrid,
+                  trControl = ctrl,
+                  preProc = c("YeoJohnson", "center", "scale"),
+                  linout = TRUE,
+                  trace = FALSE,
+                  MaxNWts = 84851,
+                  maxit = 500)
+
+nnet_pred <- predict(nnet_model, newdata = data.frame(test_X))
 ```
 
 #### Multivariate Adaptive Regression Splines
+
+We can display the variable importance for this model using the `varImp` function.
 
 ```{r}
 marsGrid <- expand.grid(.degree = 1:2, .nprune = 2:38)
@@ -408,12 +418,21 @@ mars_model <- train(train_X,
                     trControl = trainControl(method = "cv"))
 
 mars_pred <- predict(mars_model, newdata = test_X)
-postResample(pred = mars_pred, obs = test_y)
+
+plot(varImp(mars_model))
 ```
+
+[According to the `caret` documentation](https://topepo.github.io/caret/variable-importance.html), for Multivariate Adaptive Regression Splines:
+
+"The `varImp` function tracks the changes in model statistics, such as the GCV, for each predictor and accumulates the reduction in the statistic when each predictor’s feature is added to the model."
+
+The plot above us shows us that `Mnf_Flow` has a significant amount of importance for this particular model. The importance profile isn't as steep as Figure 8.21 in the Applied Predictive Modeling textbook (Compare Figure 8.6 to Figure 8.21 in the Applied Predictive Modeling textbook). In other words, differences in importance between predictors are subtle and not drastic for this particular model.
 
 #### Support Vector Machines
 
 ```{r}
+set.seed(100)
+
 svmR_model <- train(train_X[,-1] %>% as.matrix(),
                     train_y %>% as_vector(),
                     method = "svmRadial",
@@ -422,10 +441,15 @@ svmR_model <- train(train_X[,-1] %>% as.matrix(),
                     trControl = trainControl(method = "cv"))
 
 svmR_pred <- predict(svmR_model, newdata = test_X[,-1] %>% as.matrix())
-postResample(pred = svmR_pred, obs = test_y %>% as_vector())
+
+svmR_model$finalModel
 ```
 
+The subobject named `finalModel` contains the model as shown in the above code chunk. The output above shows us that the model used 1753 training set data points as support vectors (85.1% of the training set).
+
 #### K-Nearest Neighbors
+
+The `knnreg` function in the `caret` package ﬁts the KNN regression model. `train` tunes the model over `k` through the `tuneGrid` parameter, which creates a grid of values for `k` from 1 to 20.
 
 ```{r}
 set.seed(100)
@@ -433,12 +457,11 @@ set.seed(100)
 knn_model <- train(train_X[,-1] %>% as.matrix(),
                    train_y %>% as_vector(),
                    method = "knn",
-                   preProc = c("center", "scale"),
+                   preProc = c("YeoJohnson", "center", "scale"),
                    tuneGrid = data.frame(.k = 1:20),
                    trControl = trainControl(method = "cv"))
 
 knn_pred <- predict(knn_model, newdata = test_X[,-1] %>% as.matrix())
-postResample(pred = knn_pred, obs = test_y %>% as_vector())
 ```
 
 ## Regression Trees and Rule-Based Models
@@ -453,16 +476,21 @@ Therefore, the only preprocessing that will be done is performing a Yeo-Johnson 
 #### Single Trees Model
 
 ```{r}
+set.seed(100)
+
 single_trees_model <- train(train_X, 
                             train_y,
                             method = "rpart2",
-                            tuneLength = 10,
+                            tuneLength = 20,
                             preProcess = c("YeoJohnson"),
                             trControl = trainControl(method = "cv"))
 
 single_trees_pred <- predict(single_trees_model, newdata = test_X)
-postResample(pred = single_trees_pred, obs = test_y)
+
+plot(single_trees_model)
 ```
+
+The plot above shows us that the optimal `Max Tree Depth` when creating the single tree model for the beverage dataset is around 15.
 
 #### Model Tree
 
@@ -478,31 +506,41 @@ tree_model <- train(
                 control = Weka_control(M = 10))
 
 tree_pred <- predict(tree_model, newdata = test_X)
-postResample(pred = tree_pred, obs = test_y)
+
+plot(tree_model)
 ```
+
+The plot above shows the cross-validation profiles for the beverage data. Unpruned trees usually over-fit the training data, which is reflected in the plot above. With smoothing, the error rate is significantly improved. The figure above indicates that the optimal model used pruning and smoothing.
 
 #### Bagged Tree Model
 
+In this model, the `ipredbagg` function was used to create the bagged tree model.
+
 ```{r}
+set.seed(100)
+
 bagged_tree_model <- ipredbagg(train_y, 
                                train_X,
                                preProcess = c("YeoJohnson"))
 
 bagged_tree_pred <- predict(bagged_tree_model, newdata = test_X)
-postResample(pred = bagged_tree_pred, obs = test_y)
+
 ```
 
 #### Random Forest Model
 
 ```{r}
 rf_model <- randomForest(train_X, train_y,
-                         preProcess = c("YeoJohnson", "center", "scale"),
+                         preProcess = c("YeoJohnson"),
                         importance = TRUE,
                         ntrees = 1000)
 
 rf_pred <- predict(rf_model, newdata = test_X)
-postResample(pred = rf_pred, obs = test_y)
+
+plot(rf_model)
 ```
+
+The plot above shows that the error decreases sharply then reaches some asymptotic value before the number of trees reaches 50.
 
 #### Boosted Tree Model
 
@@ -522,8 +560,12 @@ gbmTune <- train(train_X,
                  verbose = FALSE)
 
 gbm_pred <- predict(gbmTune, newdata = test_X)
-postResample(pred = gbm_pred, obs = test_y)
+
+gbmTune
+plot(gbmTune)
 ```
+
+The figure above shows us that the larger value of shrinkage has an impact on reducing the RMSE for all choices of tree depth and number of trees. Also RMSE decreases as tree depth increases. The output above also tells us that the optimal boosted tree has depth 7 with 750 trees and a shrinkage of 0.1.
 
 #### Cubist
 
@@ -532,10 +574,13 @@ cubistTuned <- train(
   train_X, 
   train_y,
   preProcess = c("YeoJohnson"),
+  trControl = ctrl,
+  tuneGrid = cubist_grid,
   method = "cubist")
 
 cubist_pred <- predict(cubistTuned, newdata = test_X)
-postResample(pred = cubist_pred, obs = test_y)
+
+plot(cubistTuned)
 ```
 
 ## Modeling Selection
@@ -588,4 +633,5 @@ tracker <- update_tracker("Random Forest", test_y, rf_pred)
 tracker <- update_tracker("Boosted Tree", test_y, gbm_pred)
 tracker <- update_tracker("Cubist", test_y, cubist_pred)
 ```
+
 

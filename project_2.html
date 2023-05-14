@@ -669,8 +669,18 @@ the absolute pairwise correlation between the predictors is less than
 generate the final predictions, only the predictors that were selected
 from the <code>beverage_train</code> dataset after filtering out the
 highly correlated predictors will be used.</p>
+<p>Before the removal of the highly correlated predictors is performed.
+We must be cognizant of the fact that PLS models “allows you to reduce
+the dimensionality of correlated variables and model the underlying,
+shared, information of those variables (in both dependent and
+independent variables).” (<a href="http://webcache.googleusercontent.com/search?q=cache:o5QYlxuDAvYJ:https://towardsdatascience.com/partial-least-squares-f4e6714452a&amp;client=ubuntu&amp;hl=en&amp;gl=us&amp;strip=1&amp;vwsrc=0">source</a>).
+Therefore, we will be using all of the remaining variables for the PLS
+model generated in the “Partial Least Squares” section.</p>
 <pre class="r"><code>tooHigh &lt;- findCorrelation(cor(beverage_train %&gt;%
   select(-c(Brand_Code, PH))), cutoff = 0.75)
+
+beverage_train_high_corr &lt;- beverage_train
+beverage_test_high_corr &lt;- beverage_test
 
 beverage_train &lt;- beverage_train[, -tooHigh]
 beverage_test &lt;- beverage_test[, -tooHigh]</code></pre>
@@ -715,7 +725,14 @@ sample &lt;- sample.split(beverage_train$PH, SplitRatio = 0.8)
 train_X  &lt;- subset(beverage_train %&gt;% select(-PH), sample == TRUE)
 test_X   &lt;- subset(beverage_train %&gt;% select(-PH), sample == FALSE)
 train_y &lt;- subset(beverage_train$PH, sample == TRUE)
-test_y &lt;- subset(beverage_train$PH, sample == FALSE)</code></pre>
+test_y &lt;- subset(beverage_train$PH, sample == FALSE)
+
+sample_high_corr &lt;- sample.split(beverage_train$PH, SplitRatio = 0.8)
+
+train_X_high_corr &lt;- subset(beverage_train_high_corr %&gt;% select(-PH), sample == TRUE)
+test_X_high_corr &lt;- subset(beverage_train_high_corr %&gt;% select(-PH), sample == FALSE)
+train_y_high_corr &lt;- subset(beverage_train_high_corr$PH, sample == TRUE)
+test_y_high_corr &lt;- subset(beverage_train_high_corr$PH, sample == FALSE)</code></pre>
 </div>
 <div id="general-modeling" class="section level2">
 <h2>General Modeling</h2>
@@ -729,7 +746,33 @@ performance. The function <code>trainControl</code> speciﬁes the type of
 resampling.”</p>
 <p>We will be using the testing set to compute the testing set RMSE,
 Rsquared, and MAE. We will use these metrics to select the best
-model</p>
+model.</p>
+<p>Some of the models will not allow categorical variables to be used,
+which means the <code>Brand Code</code> variable cannot be used in these
+model types. Converting a categorical variable to a numerical one can be
+done, but since the <code>Brand Code</code> variable takes on more than
+two different categories, the conversion would not be advantageous. As
+explained by Ashkon Farhangi:</p>
+<p>“In the vast majority of cases using dummy variables is more
+statistically sound than using a single numerical variable. A single
+numerical variable does not accurately encode the information
+represented by a categorical variable, because of the relationships
+between numerical values it implicitly implies. On the number line, 1 is
+closer to 2 than it is to 3. However, by definition no pair of values
+assumed by categorical variables is more similar than any other.
+Encoding three such values as 1, 2 and 3 will result in the model
+inferring incorrect relationships between those numbers. The fact that
+real valued numbers fall on a number line that implies a greater degree
+of similarity between values that fall closer to one another along it;
+this notion is incompatible with categorical variables. Using dummy
+variables avoids this pitfall.”</p>
+<p>Models where the <code>Brand Code</code> predictor was not used
+include:</p>
+<ul>
+<li>Penalized Regression</li>
+<li>Support Vector Machines</li>
+<li>K-Nearest Neighbors</li>
+</ul>
 <pre class="r"><code>ctrl &lt;- trainControl(method = &quot;cv&quot;, number = 10)</code></pre>
 <div id="linear-regression-modeling" class="section level3">
 <h3>Linear Regression Modeling</h3>
@@ -745,10 +788,245 @@ postResample(pred = olr_pred, obs = test_y)</code></pre>
 <pre><code>##      RMSE  Rsquared       MAE 
 ## 0.1349479 0.3687633 0.1053912</code></pre>
 </div>
-<div id="section" class="section level4">
-<h4></h4>
+<div id="partial-least-squares" class="section level4">
+<h4>Partial Least Squares</h4>
+<pre class="r"><code>set.seed(100)
+
+pls_model &lt;- train(train_X_high_corr, 
+                   train_y_high_corr,
+                   method = &quot;pls&quot;,
+                   tuneLength = 20,
+                   trControl = ctrl,
+                   preProc = c(&quot;center&quot;, &quot;scale&quot;))
+
+pls_pred &lt;- predict(pls_model, newdata = test_X_high_corr)
+postResample(pred = pls_pred, obs = test_y_high_corr)</code></pre>
+<pre><code>##      RMSE  Rsquared       MAE 
+## 0.1347655 0.3711381 0.1044757</code></pre>
+</div>
+<div id="penalized-regression-model" class="section level4">
+<h4>Penalized Regression Model</h4>
+<pre class="r"><code>## Define the candidate set of values
+ridgeGrid &lt;- data.frame(.lambda = seq(0, .1, length = 15))
+
+set.seed(100)
+
+ridgeReg_model &lt;- train(train_X[,-1] %&gt;% as.matrix(),
+                        train_y %&gt;% as.vector(),
+                        method = &quot;ridge&quot;,
+                        tuneGrid = ridgeGrid,
+                        trControl = ctrl,
+                        preProc = c(&quot;center&quot;, &quot;scale&quot;))
+
+ridgeReg_pred &lt;- predict(ridgeReg_model, newdata = test_X[,-1] %&gt;% as.matrix())
+postResample(pred = ridgeReg_pred, obs = test_y %&gt;% as.vector())</code></pre>
+<pre><code>##      RMSE  Rsquared       MAE 
+## 0.1425452 0.2953001 0.1106143</code></pre>
 </div>
 </div>
+<div id="non-linear-regression-modeling" class="section level3">
+<h3>Non-Linear Regression Modeling</h3>
+<div id="neural-network-model" class="section level4">
+<h4>Neural Network Model</h4>
+<pre class="r"><code># nnetGrid &lt;- expand.grid(.decay = c(0, 0.01, .1),
+#                         .size = c(1:10),
+#                         .bag = FALSE)
+# 
+# set.seed(100)
+# 
+# nnet_model &lt;- train(train_X, train_y,
+#                   method = &quot;avNNet&quot;,
+#                   tuneGrid = nnetGrid,
+#                   trControl = ctrl,
+#                   preProc = c(&quot;center&quot;, &quot;scale&quot;),
+#                   linout = TRUE,
+#                   trace = FALSE,
+#                   MaxNWts = 84851,
+#                   maxit = 500)
+# 
+# nnet_pred &lt;- predict(nnet_model, newdata = data.frame(test_X))
+# postResample(pred = nnet_pred, obs = test_y)</code></pre>
+</div>
+<div id="multivariate-adaptive-regression-splines" class="section level4">
+<h4>Multivariate Adaptive Regression Splines</h4>
+<pre class="r"><code>marsGrid &lt;- expand.grid(.degree = 1:2, .nprune = 2:38)
+
+set.seed(100)
+
+mars_model &lt;- train(train_X,
+                    train_y,
+                    method = &quot;earth&quot;,
+                    tuneGrid = marsGrid,
+                    preProcess = c(&quot;YeoJohnson&quot;),
+                    trControl = trainControl(method = &quot;cv&quot;))</code></pre>
+<pre><code>## Loading required package: earth</code></pre>
+<pre><code>## Loading required package: Formula</code></pre>
+<pre><code>## Loading required package: plotmo</code></pre>
+<pre><code>## Loading required package: plotrix</code></pre>
+<pre><code>## Loading required package: TeachingDemos</code></pre>
+<pre class="r"><code>mars_pred &lt;- predict(mars_model, newdata = test_X)
+postResample(pred = mars_pred, obs = test_y)</code></pre>
+<pre><code>##       RMSE   Rsquared        MAE 
+## 0.12362021 0.47383641 0.09366559</code></pre>
+</div>
+<div id="support-vector-machines" class="section level4">
+<h4>Support Vector Machines</h4>
+<pre class="r"><code>svmR_model &lt;- train(train_X[,-1] %&gt;% as.matrix(),
+                    train_y %&gt;% as_vector(),
+                    method = &quot;svmRadial&quot;,
+                    preProc = c(&quot;YeoJohnson&quot;, &quot;center&quot;, &quot;scale&quot;),
+                    tuneLength = 14,
+                    trControl = trainControl(method = &quot;cv&quot;))
+
+svmR_pred &lt;- predict(svmR_model, newdata = test_X[,-1] %&gt;% as.matrix())
+postResample(pred = svmR_pred, obs = test_y %&gt;% as_vector())</code></pre>
+<pre><code>##       RMSE   Rsquared        MAE 
+## 0.13009674 0.41861363 0.09385914</code></pre>
+</div>
+<div id="k-nearest-neighbors" class="section level4">
+<h4>K-Nearest Neighbors</h4>
+<pre class="r"><code>set.seed(100)
+
+knn_model &lt;- train(train_X[,-1] %&gt;% as.matrix(),
+                   train_y %&gt;% as_vector(),
+                   method = &quot;knn&quot;,
+                   preProc = c(&quot;center&quot;, &quot;scale&quot;),
+                   tuneGrid = data.frame(.k = 1:20),
+                   trControl = trainControl(method = &quot;cv&quot;))
+
+knn_pred &lt;- predict(knn_model, newdata = test_X[,-1] %&gt;% as.matrix())
+postResample(pred = knn_pred, obs = test_y %&gt;% as_vector())</code></pre>
+<pre><code>##       RMSE   Rsquared        MAE 
+## 0.13242439 0.39427027 0.09633514</code></pre>
+</div>
+</div>
+</div>
+<div id="regression-trees-and-rule-based-models" class="section level2">
+<h2>Regression Trees and Rule-Based Models</h2>
+<p>According to <a href="https://www.google.com/url?sa=t&amp;rct=j&amp;q=&amp;esrc=s&amp;source=web&amp;cd=&amp;cad=rja&amp;uact=8&amp;ved=2ahUKEwjHxYqInvP-AhVPFlkFHUb2BOwQFnoECBMQAQ&amp;url=https%3A%2F%2Ftowardsdatascience.com%2Fdo-decision-trees-need-feature-scaling-97809eaa60c6&amp;usg=AOvVaw1AqZ6ad45E2ok3xan-Q4Pb">this</a>
+Medium article:</p>
+<p>“Decision trees and ensemble methods do not require feature scaling
+to be performed as they are not sensitive to the the variance in the
+data.”</p>
+<p>Therefore, the only preprocessing that will be done is performing a
+Yeo-Johnson transformation using the <code>preProcess</code>
+parameter.</p>
+<div id="single-trees-model" class="section level4">
+<h4>Single Trees Model</h4>
+<pre class="r"><code>single_trees_model &lt;- train(train_X, 
+                            train_y,
+                            method = &quot;rpart2&quot;,
+                            tuneLength = 10,
+                            preProcess = c(&quot;YeoJohnson&quot;),
+                            trControl = trainControl(method = &quot;cv&quot;))
+
+single_trees_pred &lt;- predict(single_trees_model, newdata = test_X)
+postResample(pred = single_trees_pred, obs = test_y)</code></pre>
+<pre><code>##      RMSE  Rsquared       MAE 
+## 0.1270852 0.4419870 0.1007020</code></pre>
+</div>
+<div id="model-tree" class="section level4">
+<h4>Model Tree</h4>
+<pre class="r"><code>set.seed(100)
+
+tree_model &lt;- train(
+                train_X, 
+                train_y,
+                method = &quot;M5&quot;,
+                trControl = trainControl(method = &quot;cv&quot;),
+                preProcess = c(&quot;YeoJohnson&quot;),
+                control = Weka_control(M = 10))
+
+tree_pred &lt;- predict(tree_model, newdata = test_X)
+postResample(pred = tree_pred, obs = test_y)</code></pre>
+<pre><code>##      RMSE  Rsquared       MAE 
+## 0.1285445 0.4280634 0.0984317</code></pre>
+</div>
+<div id="bagged-tree-model" class="section level4">
+<h4>Bagged Tree Model</h4>
+<pre class="r"><code>bagged_tree_model &lt;- ipredbagg(train_y, 
+                               train_X,
+                               preProcess = c(&quot;YeoJohnson&quot;))
+
+bagged_tree_pred &lt;- predict(bagged_tree_model, newdata = test_X)
+postResample(pred = bagged_tree_pred, obs = test_y)</code></pre>
+<pre><code>##       RMSE   Rsquared        MAE 
+## 0.11883266 0.51253133 0.09303323</code></pre>
+</div>
+<div id="random-forest-model" class="section level4">
+<h4>Random Forest Model</h4>
+<pre class="r"><code>rf_model &lt;- randomForest(train_X, train_y,
+                         preProcess = c(&quot;YeoJohnson&quot;, &quot;center&quot;, &quot;scale&quot;),
+                        importance = TRUE,
+                        ntrees = 1000)
+
+rf_pred &lt;- predict(rf_model, newdata = test_X)
+postResample(pred = rf_pred, obs = test_y)</code></pre>
+<pre><code>##       RMSE   Rsquared        MAE 
+## 0.09741691 0.68194538 0.07087061</code></pre>
+</div>
+<div id="boosted-tree-model" class="section level4">
+<h4>Boosted Tree Model</h4>
+<pre class="r"><code>gbmGrid &lt;- expand.grid(.interaction.depth = seq(1, 7, by = 2),
+                       .n.trees = seq(100, 1000, by = 50),
+                       .shrinkage = c(0.01, 0.1),
+                       .n.minobsinnode = 10)
+
+set.seed(100)
+
+gbmTune &lt;- train(train_X, 
+                 train_y,
+                 method = &quot;gbm&quot;,
+                 preProcess = c(&quot;YeoJohnson&quot;),
+                 tuneGrid = gbmGrid,
+                 verbose = FALSE)
+
+gbm_pred &lt;- predict(gbmTune, newdata = test_X)
+postResample(pred = gbm_pred, obs = test_y)</code></pre>
+<pre><code>##       RMSE   Rsquared        MAE 
+## 0.10398233 0.62794984 0.07728084</code></pre>
+</div>
+<div id="cubist" class="section level4">
+<h4>Cubist</h4>
+<pre class="r"><code>cubistTuned &lt;- train(
+  train_X, 
+  train_y,
+  preProcess = c(&quot;YeoJohnson&quot;),
+  method = &quot;cubist&quot;)
+
+cubist_pred &lt;- predict(cubistTuned, newdata = test_X)
+postResample(pred = cubist_pred, obs = test_y)</code></pre>
+<pre><code>##       RMSE   Rsquared        MAE 
+## 0.10089544 0.64860365 0.07316991</code></pre>
+</div>
+</div>
+<div id="modeling-selection" class="section level2">
+<h2>Modeling Selection</h2>
+<p>In this section, the model that will be selected to generate the
+final test predictions will be selected. The selection criteria comes
+down to three metrics. These three metrics were generated using the
+<code>postResample</code> function:</p>
+<ul>
+<li><a href="https://www.reddit.com/r/explainlikeimfive/comments/8axf23/eli5_what_is_the_difference_between_mean_absolute/">MAE</a>
+<ul>
+<li>Measures average distance of each measurement from the total average
+value. Small errors drown out rare, but large errors.</li>
+</ul></li>
+<li><a href="https://help.sap.com/docs/SAP_PREDICTIVE_ANALYTICS/41d1a6d4e7574e32b815f1cc87c00f42/5e5198fd4afe4ae5b48fefe0d3161810.html">RMSE</a>
+<ul>
+<li>This is the MAE, but the error is squared, then the entire square
+root of the equation is taken. This is to reduce the effect of small
+errors will increasing the effect of large errors.</li>
+</ul></li>
+<li><a href="https://www.investopedia.com/terms/r/r-squared.asp">Rsquared</a>
+<ul>
+<li>Represents how much of the variation of a dependent variable is
+explained by an independent variable in a regression model.</li>
+</ul></li>
+</ul>
+<p>All of these metrics will be generated using the test set that was
+generated when the 80/20 split was performed. Each of these metrics are
+displayed in the table below.</p>
 </div>
 </div>
 
