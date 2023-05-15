@@ -7,6 +7,7 @@ output: html_document
 
 ```{r setup, include=FALSE, echo = FALSE, warning = FALSE, message = FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+rm(list = ls())
 
 library(readxl)
 library(tidyverse)
@@ -51,7 +52,7 @@ In this report, we generate a machine learning model that is able to predict the
   - Boosted Trees
   - Cubist
 
-From these models, a best model was selected based on model performance and various metrics. All of the models were evaluated based on a test set generated from the `StudentData.xlsx` file given to the team. Ultimately, it was decided that *PLACE BEST MODEL HERE* was selected based on its performance on the test set.
+From these models, a best model was selected based on model performance and various metrics. All of the models were evaluated based on a test set generated from the `StudentData.xlsx` file given to the team. Ultimately, it was decided that Random Forest model was selected based on its performance on the test set.
 
 ## Data Exploration
 
@@ -80,7 +81,7 @@ beverage_test <- beverage_test %>%
 
 The following code chunk produces a histogram for all of the continuous variables in the `beverage_train` data frame.
 
-```{r message = FALSE, echo = FALSE, warning = FALSE, results = 'hide', fig.keep='all', fig.height = 20}
+```{r message = FALSE, warning = FALSE, results = 'hide', fig.keep='all', fig.height = 20}
 beverage_train %>%
   keep(is.numeric) %>% 
   gather() %>% 
@@ -130,7 +131,7 @@ Some of the predictors in particular have many observations that take on just on
 
 Boxplots for each of the continuous variables are shown below.
 
-```{r message = FALSE, echo = FALSE, warning = FALSE, results = 'hide', fig.keep='all', fig.width=10, fig.height=20}
+```{r message = FALSE, warning = FALSE, results = 'hide', fig.keep='all', fig.width=10, fig.height=20}
 reshape2::melt(beverage_train) %>%
   ggplot(aes(y = value)) +
   geom_boxplot() +
@@ -199,7 +200,7 @@ beverage_train  %>%
 
 # Data Preparation
 
-### Dealing with Missing Values
+## Dealing with Missing Values
 
 In general, imputations by the means/medians is acceptable if the missing values only account for 5% of the sample. Peng et al.(2006) However, should the degree of missing values exceed 20% then using these simple imputation approaches will result in an artificial reduction in variability due to the fact that values are being imputed at the center of the variable's distribution.
 
@@ -220,7 +221,7 @@ names(beverage_test) <- gsub(" ", "_", names(beverage_test))
 
 The following code chunks use predictive mean matching to impute the missing values.
 
-```{r Imputing the missing data from MICE, include = FALSE}
+```{r Imputing the missing data from MICE}
 temp_train <- mice(beverage_train,m=4,maxit=5,meth='pmm',seed=500)
 temp_eval <- mice(beverage_test,m=4,maxit=5,meth='pmm',seed=500)
 ```
@@ -236,7 +237,7 @@ mice::densityplot(temp_train)
 
 The blue lines for each of the graphs in the figure above represent the distributions the non-missing data for each of the variables while the red lines represent the distributions for the imputed data. Note that the distributions for the imputed data for each of the iterations closely matches the distributions for the non-missing data, which is ideal. If the distributions did not match so well, than another imputing method would have had to have been used.
 
-### Remove Predictors With Low Frequencies
+## Remove Predictors With Low Frequencies
 
 We can filter out near-zero variance predictors by using the `nearZeroVar` function from the `caret` package.
 
@@ -246,7 +247,7 @@ beverage_test <- beverage_test[, names(beverage_train)]
 ```
 
 
-### Removing Highly Correlated Predictors
+## Removing Highly Correlated Predictors
 
 We will use the methodology outlined in page 163 of the Applied Predictive Modeling textbook by Kuhn and Johnson in order to ensure that the absolute pairwise correlation between the predictors is less than 0.75. For the `beverage_test` set that will be used to generate the final predictions, only the predictors that were selected from the `beverage_train` dataset after filtering out the highly correlated predictors will be used.
 
@@ -263,7 +264,7 @@ beverage_train <- beverage_train[, -tooHigh]
 beverage_test <- beverage_test[, -tooHigh]
 ```
 
-### Yeo-Johnson Transformations, Centering, Scaling
+## Yeo-Johnson Transformations, Centering, Scaling
 
 Page 54 in the Applied Predictive Modeling textbook explains that:
 
@@ -271,13 +272,13 @@ Page 54 in the Applied Predictive Modeling textbook explains that:
 
 In the `train` function in the `caret` package, there is a `preProcess` parameter. The `train` function is what will be used to create the models in the following sections. This `preProcess` parameter will be set to a vector containing any combination of these 3 strings: `YeoJohnson`, `center`, `scale`. These three strings perform the appropriate YeoJohnson transformations in addition to centering and scaling the predictors. We originally were going to perform Box-Cox transformations, but the summary of the dataset revealed that some of the predictors contained negative values (`Mnf Flow`, `Hyd Pressure3`, etc.). Centering and scaling is generally performed to improve the numerical stability of some calculations. As explained on page 31 of the Applied Predictive Modeling textbook, PLS models benefit from predictors being in a common scale.
 
-### Data Splitting
+## Data Splitting
 
-We're going to use the Pareto Principle to split the data. Wikipedia explains that:
+The Pareto Principle was used to split the data. Wikipedia explains that:
 
 "The Pareto principle states that for many outcomes, roughly 80% of consequences come from 20% of causes (the "vital few")."
 
-Therefore, we will be employing an 80/20 split to the `beverage_train` dataset.
+Therefore, an 80/20 split was applied to the `beverage_train` dataset.
 
 ```{r}
 set.seed(1)
@@ -296,7 +297,7 @@ train_y_high_corr <- subset(beverage_train_high_corr$PH, sample == TRUE)
 test_y_high_corr <- subset(beverage_train_high_corr$PH, sample == FALSE)
 ```
 
-## General Modeling
+# General Modeling
 
 For some of the models, we will be using the `trControl` parameter in the `caret::train` function. Reason why is explained in page 130 of the Applied Predictive Modeling textbook:
 
@@ -318,9 +319,9 @@ Models where the `Brand Code` predictor was not used include:
 ctrl <- trainControl(method = "cv", number = 10)
 ```
 
-### Linear Regression Modeling
+## Linear Regression Modeling
 
-#### Ordinary Linear Regression
+### Ordinary Linear Regression
 
 We set the `method` to `lm` in the `train` function in the `caret` package to let `train` know that the data must be fit to a linear regression model.
 
@@ -333,7 +334,7 @@ olr_model <- caret::train(train_X, train_y,
 olr_pred <- predict(olr_model, newdata = data.frame(test_X))
 ```
 
-#### Partial Least Squares
+### Partial Least Squares
 
 For this model, the maximum number of components was calculated.
 
@@ -354,7 +355,7 @@ plot(pls_model)
 
 The plot above shows us that a minimum RMSE was found at around 0.1347. This is approximately at 10 components.
 
-#### Penalized Regression Model
+### Penalized Regression Model
 
 In order to tune over the penalty, a dataframe of different lambdas from 0 to 0.1 was generated. This dataframe was then used in the `tuneGrid` parameter in the `train` function in the `caret` package in order to find the lambda, and in effect, the model, resulting in the lowest error.
 
@@ -377,9 +378,9 @@ plot(ridgeReg_model)
 ```
 The plot above shows us that the lowest RMSE happens when the lambda/weight decay is at 0.007142857.
 
-### Non-Linear Regression Modeling
+## Non-Linear Regression Modeling
 
-#### Neural Network Model
+### Neural Network Model
 
 ```{r}
 nnetGrid <- expand.grid(.decay = c(0, 0.01, .1),
@@ -401,7 +402,7 @@ nnet_model <- train(train_X, train_y,
 nnet_pred <- predict(nnet_model, newdata = data.frame(test_X))
 ```
 
-#### Multivariate Adaptive Regression Splines
+### Multivariate Adaptive Regression Splines
 
 We can display the variable importance for this model using the `varImp` function.
 
@@ -428,7 +429,7 @@ plot(varImp(mars_model))
 
 The plot above us shows us that `Mnf_Flow` has a significant amount of importance for this particular model. The importance profile isn't as steep as Figure 8.21 in the Applied Predictive Modeling textbook (Compare Figure 8.6 to Figure 8.21 in the Applied Predictive Modeling textbook). In other words, differences in importance between predictors are subtle and not drastic for this particular model.
 
-#### Support Vector Machines
+### Support Vector Machines
 
 ```{r}
 set.seed(100)
@@ -447,7 +448,7 @@ svmR_model$finalModel
 
 The subobject named `finalModel` contains the model as shown in the above code chunk. The output above shows us that the model used 1753 training set data points as support vectors (85.1% of the training set).
 
-#### K-Nearest Neighbors
+### K-Nearest Neighbors
 
 The `knnreg` function in the `caret` package ﬁts the KNN regression model. `train` tunes the model over `k` through the `tuneGrid` parameter, which creates a grid of values for `k` from 1 to 20.
 
@@ -473,7 +474,7 @@ According to [this](https://www.google.com/url?sa=t&rct=j&q=&esrc=s&source=web&c
 Therefore, the only preprocessing that will be done is performing a Yeo-Johnson transformation using the `preProcess` parameter.
 
 
-#### Single Trees Model
+### Single Trees Model
 
 ```{r}
 set.seed(100)
@@ -492,7 +493,7 @@ plot(single_trees_model)
 
 The plot above shows us that the optimal `Max Tree Depth` when creating the single tree model for the beverage dataset is around 15.
 
-#### Model Tree
+### Model Tree
 
 ```{r}
 set.seed(100)
@@ -512,7 +513,7 @@ plot(tree_model)
 
 The plot above shows the cross-validation profiles for the beverage data. Unpruned trees usually over-fit the training data, which is reflected in the plot above. With smoothing, the error rate is significantly improved. The figure above indicates that the optimal model used pruning and smoothing.
 
-#### Bagged Tree Model
+### Bagged Tree Model
 
 In this model, the `ipredbagg` function was used to create the bagged tree model.
 
@@ -527,13 +528,13 @@ bagged_tree_pred <- predict(bagged_tree_model, newdata = test_X)
 
 ```
 
-#### Random Forest Model
+### Random Forest Model
 
 ```{r}
 rf_model <- randomForest(train_X, train_y,
                          preProcess = c("YeoJohnson"),
-                        importance = TRUE,
-                        ntrees = 1000)
+                         importance = TRUE,
+                         ntrees = 1000)
 
 rf_pred <- predict(rf_model, newdata = test_X)
 
@@ -542,7 +543,7 @@ plot(rf_model)
 
 The plot above shows that the error decreases sharply then reaches some asymptotic value before the number of trees reaches 50.
 
-#### Boosted Tree Model
+### Boosted Tree Model
 
 ```{r}
 gbmGrid <- expand.grid(.interaction.depth = seq(1, 7, by = 2),
@@ -567,7 +568,7 @@ plot(gbmTune)
 
 The figure above shows us that the larger value of shrinkage has an impact on reducing the RMSE for all choices of tree depth and number of trees. Also RMSE decreases as tree depth increases. The output above also tells us that the optimal boosted tree has depth 7 with 750 trees and a shrinkage of 0.1.
 
-#### Cubist
+### Cubist
 
 ```{r}
 cubistTuned <- train(
@@ -575,15 +576,15 @@ cubistTuned <- train(
   train_y,
   preProcess = c("YeoJohnson"),
   trControl = ctrl,
-  tuneGrid = cubist_grid,
   method = "cubist")
 
 cubist_pred <- predict(cubistTuned, newdata = test_X)
 
 plot(cubistTuned)
 ```
+The plot above shows that as the number of instances increases, the RMSE lowers, also as the number of committees increases the RMSE also lowers, which indicates that the optimal model has a high number of committees (20) and instances (9) for this particular dataset.
 
-## Modeling Selection
+# Model Selection
 
 In this section, the model that will be selected to generate the final test predictions will be selected. The selection criteria comes down to three metrics. These three metrics were generated using the `postResample` function:
 
@@ -601,7 +602,7 @@ All of these metrics will be generated using the test set that was generated whe
 ````{r, message = FALSE, echo = FALSE, include = FALSE}
 #Function to update the tracker
 update_tracker <- function(model_name, actual, predicted){
-  model_metrics <- postResample(pred = predicted, obs = actual)
+  model_metrics <- round(postResample(pred = predicted, obs = actual), 3)
   tracker[nrow(tracker) + 1,] <- c(model_name, model_metrics)
   return(tracker)
 }
@@ -634,4 +635,38 @@ tracker <- update_tracker("Boosted Tree", test_y, gbm_pred)
 tracker <- update_tracker("Cubist", test_y, cubist_pred)
 ```
 
+```{r}
+tracker %>% arrange(by = RMSE)
+```
 
+The table above shows that the Random Forest model has the lowest RMSE and the highest Rsquared. This model is therefore the best performing model for this beverage data based on the test set that was generated. Note that none of the Linear and Non-Linear regression models, except for the neural network model, were able to achieve R-squares above 0.5. It was not until the tree based models were used where the Rsquareds were able to rise above 0.5. However, the neural network model took upwards of 40 minutes to be generated as opposed to less than 5 minutes for many of the tree based models. Not only that, it is not even the most accurate model shown in the table above, and these factors illustrate the strength that tree based models have on this particular dataset.
+
+```{r}
+randomForest::varImpPlot(rf_model,
+                         main = "Variable Importance for Random Forest Model")
+```
+
+According to [DataCamp](https://campus.datacamp.com/courses/introduction-to-machine-learning-in-r/how-much-will-i-earn?ex=6):
+
+"Mean Decrease Accuracy (`%IncMSE`) - This shows how much our model accuracy decreases if we leave out that variable.
+
+Mean Decrease Gini (`IncNodePurity`) - This is a measure of variable importance based on the Gini impurity index used for the calculating the splits in trees.
+
+The higher the value of mean decrease accuracy or mean decrease gini score, the higher the importance of the variable to our model."
+
+The importance plot on the left shows that all of the variables above `Fill_Ounces` would decrease the model accuracy by more than 10% if the variable is left out. It is shown that the `Mnf_Flow` predictor plays a very important role in the accuracy of the model, followed by `Brand_Code`.
+
+# Generating Predictions
+
+In this section, predictions from the selected Random Forest model will be generated for the `beverage_test` dataset and saved to a .csv.
+
+```{r}
+rf_test_pred_df <- data.frame(predict(rf_model, newdata = beverage_test %>% select(-PH)))
+colnames(rf_test_pred_df) <- c("Predictions")
+
+write.csv(rf_test_pred_df, file = "predictions.csv", row.names = FALSE)
+```
+
+# Conclusion
+
+In order to find the best model for this particular dataset, many models had to be generated. Most of these models would not have done any better than random guessing because their Rsquare values were below 0.5. The tree based models worked well with this dataset. The Random Forest model in particular not only had the highest Rsquared but also a relatively low runtime due to the fact that tree building can be done through parallel processing. One suggestion that the team has for this project would be to have detailed descriptors for each of the variables. This would allow the team to better interpret the importance that each predictor in the random forest model has in terms of the PH level of a drink. 
