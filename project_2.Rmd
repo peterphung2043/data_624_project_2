@@ -381,7 +381,7 @@ The plot above shows us that the lowest RMSE happens when the lambda/weight deca
 
 #### Neural Network Model
 
-```{r eval = FALSE}
+```{r}
 nnetGrid <- expand.grid(.decay = c(0, 0.01, .1),
                         .size = c(1:10),
                         .bag = FALSE)
@@ -620,7 +620,7 @@ tracker <- update_tracker("Partial Least Squares", test_y_high_corr, pls_pred)
 tracker <- update_tracker("Penalized Regression Model", test_y %>% as.vector(), ridgeReg_pred)
 
 # Non-Linear Models
-# tracker <- update_tracker("Neural Network Model", test_y, nnet_pred)
+tracker <- update_tracker("Neural Network Model", test_y, nnet_pred)
 tracker <- update_tracker("Multivariate Adaptive Regression Splines", test_y, mars_pred)
 tracker <- update_tracker("Support Vector Machines", test_y %>% as_vector(), svmR_pred)
 tracker <- update_tracker("K-Nearest Neighbors", test_y %>% as_vector(), knn_pred)
